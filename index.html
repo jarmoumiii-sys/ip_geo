@@ -1,0 +1,413 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>IP Geolocation Tool</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 30px 15px;
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+        }
+
+        .container {
+            max-width: 850px;
+            margin: auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: #38bdf8;
+        }
+
+        .description {
+            text-align: center;
+            color: #94a3b8;
+            margin-bottom: 30px;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+        }
+
+        input {
+            flex: 1;
+            min-width: 0;
+            padding: 14px;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            background: #1e293b;
+            color: white;
+            font-size: 16px;
+        }
+
+        button {
+            padding: 14px 20px;
+            border: none;
+            border-radius: 8px;
+            background: #38bdf8;
+            color: #082f49;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: wait;
+        }
+
+        #status {
+            text-align: center;
+            margin: 15px 0;
+            color: #facc15;
+            overflow-wrap: anywhere;
+        }
+
+        .results {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            padding: 20px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            overflow-wrap: anywhere;
+        }
+
+        .card h2 {
+            margin-top: 0;
+            color: #38bdf8;
+            font-size: 20px;
+        }
+
+        .field {
+            padding: 10px 0;
+            border-bottom: 1px solid #334155;
+        }
+
+        .field:last-of-type {
+            border-bottom: none;
+        }
+
+        .label {
+            display: block;
+            margin-bottom: 4px;
+            color: #94a3b8;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .value {
+            font-size: 15px;
+            overflow-wrap: anywhere;
+        }
+
+        a {
+            display: inline-block;
+            margin-top: 15px;
+            color: #4ade80;
+        }
+
+        .notice {
+            margin-top: 25px;
+            padding: 15px;
+            background: #172554;
+            border-radius: 8px;
+            color: #bfdbfe;
+            font-size: 14px;
+        }
+
+        @media (max-width: 650px) {
+            .results {
+                grid-template-columns: 1fr;
+            }
+
+            .search-box {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main class="container">
+
+        <h1>IP Geolocation Tool</h1>
+
+        <p class="description">
+            Investigate approximate IP location and network information.
+        </p>
+
+        <form id="lookupForm" class="search-box">
+            <input
+                id="ipInput"
+                type="text"
+                placeholder="Enter IP, e.g. 8.8.8.8"
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="IP address"
+            >
+
+            <button id="searchButton" type="submit">
+                Search IP
+            </button>
+        </form>
+
+        <div id="status" role="status" aria-live="polite">
+            Enter an IP address to start.
+        </div>
+
+        <section id="results" class="results"></section>
+
+        <div class="notice">
+            <strong>Accuracy notice:</strong>
+            IP geolocation is approximate. VPNs, proxies, mobile networks
+            and ISP routing can affect the reported location. These results
+            do not identify a person's exact physical address.
+        </div>
+
+    </main>
+
+    <script>
+        const form = document.getElementById("lookupForm");
+        const input = document.getElementById("ipInput");
+        const button = document.getElementById("searchButton");
+        const status = document.getElementById("status");
+        const results = document.getElementById("results");
+
+        function addField(card, label, value) {
+            const field = document.createElement("div");
+            field.className = "field";
+
+            const labelElement = document.createElement("span");
+            labelElement.className = "label";
+            labelElement.textContent = label;
+
+            const valueElement = document.createElement("span");
+            valueElement.className = "value";
+            valueElement.textContent =
+                value === null || value === undefined || value === ""
+                    ? "Unavailable"
+                    : String(value);
+
+            field.append(labelElement, valueElement);
+            card.appendChild(field);
+        }
+
+        async function fetchProvider(name, url) {
+            try {
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                if (
+                    data.error === true ||
+                    data.success === false ||
+                    !data.ip
+                ) {
+                    throw new Error(
+                        data.reason || data.message || "No data returned"
+                    );
+                }
+
+                return { name, data, error: null };
+
+            } catch (error) {
+                return { name, data: null, error: error.message };
+            }
+        }
+
+        function renderProvider(provider) {
+            const card = document.createElement("article");
+            card.className = "card";
+
+            const heading = document.createElement("h2");
+            heading.textContent = provider.name;
+            card.appendChild(heading);
+
+            if (provider.error || !provider.data) {
+                addField(
+                    card,
+                    "Status",
+                    "Lookup failed: " + (provider.error || "No data")
+                );
+
+                return card;
+            }
+
+            const d = provider.data;
+
+            const city = d.city || "";
+            const region = d.region || d.region_name || "";
+            const country = d.country_name || d.country || "";
+
+            addField(card, "IP Address", d.ip);
+
+            addField(
+                card,
+                "Location",
+                [city, region, country].filter(Boolean).join(", ")
+                    || "Unknown"
+            );
+
+            addField(
+                card,
+                "Country Code",
+                d.country_code || d.country_code_iso3 || ""
+            );
+
+            addField(
+                card,
+                "Coordinates",
+                d.latitude != null && d.longitude != null
+                    ? `${d.latitude}, ${d.longitude}`
+                    : "Unavailable"
+            );
+
+            addField(
+                card,
+                "ISP / Organization",
+                d.org ||
+                d.connection?.isp ||
+                d.connection?.org ||
+                ""
+            );
+
+            addField(card, "ASN", d.asn || d.connection?.asn || "");
+            addField(card, "Timezone", d.timezone || d.timezone?.id || "");
+            addField(card, "Postal Code", d.postal || "");
+
+            if (d.latitude != null && d.longitude != null) {
+                const link = document.createElement("a");
+
+                link.href =
+                    "https://www.google.com/maps?q=" +
+                    encodeURIComponent(
+                        `${d.latitude},${d.longitude}`
+                    );
+
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                link.textContent = "Open approximate location in Maps";
+
+                card.appendChild(link);
+            }
+
+            return card;
+        }
+
+        form.addEventListener("submit", async function (event) {
+            event.preventDefault();
+
+            const ip = input.value.trim();
+
+            // Basic input validation; the providers perform their own checks.
+            if (
+                ip &&
+                !/^[0-9a-fA-F:.]+$/.test(ip)
+            ) {
+                status.textContent =
+                    "Enter a valid-looking IPv4 or IPv6 address.";
+                results.replaceChildren();
+                return;
+            }
+
+            button.disabled = true;
+            button.textContent = "Searching...";
+            status.textContent = "Querying two providers...";
+            results.replaceChildren();
+
+            try {
+                const encodedIP = encodeURIComponent(ip);
+
+                const urls = ip
+                    ? [
+                        `https://ipapi.co/${encodedIP}/json/`,
+                        `https://ipwho.is/${encodedIP}`
+                    ]
+                    : [
+                        "https://ipapi.co/json/",
+                        "https://ipwho.is/"
+                    ];
+
+                const providers = await Promise.all([
+                    fetchProvider("Provider 1 — ipapi.co", urls[0]),
+                    fetchProvider("Provider 2 — ipwho.is", urls[1])
+                ]);
+
+                for (const provider of providers) {
+                    results.appendChild(renderProvider(provider));
+                }
+
+                const successful = providers.filter(
+                    provider => provider.data
+                );
+
+                if (successful.length === 0) {
+                    status.textContent =
+                        "Both lookups failed. Check your connection, " +
+                        "the IP address, or the providers' availability.";
+                    return;
+                }
+
+                if (successful.length === 1) {
+                    status.textContent =
+                        "Only one provider returned data. " +
+                        "The location is still an estimate.";
+                    return;
+                }
+
+                const first = successful[0].data;
+                const second = successful[1].data;
+
+                const sameCountry =
+                    first.country_code &&
+                    second.country_code &&
+                    first.country_code.toUpperCase() ===
+                    second.country_code.toUpperCase();
+
+                const sameCity =
+                    first.city &&
+                    second.city &&
+                    first.city.toLowerCase() ===
+                    second.city.toLowerCase();
+
+                if (sameCountry && sameCity) {
+                    status.textContent =
+                        "Both providers agree on the country and city. " +
+                        "This does not guarantee accuracy.";
+                } else {
+                    status.textContent =
+                        "The providers disagree. Compare their results; " +
+                        "neither result is guaranteed to be correct.";
+                }
+
+            } catch (error) {
+                status.textContent = "Error: " + error.message;
+            } finally {
+                button.disabled = false;
+                button.textContent = "Search IP";
+            }
+        });
+    </script>
+</body>
+</html>
